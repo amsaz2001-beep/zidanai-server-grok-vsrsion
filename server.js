@@ -134,6 +134,8 @@ async function refreshEgxBeta() {
 
 // Kick off + schedule every 30 seconds
 setTimeout(function () { refreshEgxBeta().catch(function () {}); }, 4000);
+setTimeout(function () { refreshMetals().catch(function () {}); }, 5000);
+setInterval(function () { refreshMetals().catch(function () {}); }, 60 * 1000);
 setInterval(function () { refreshEgxBeta().catch(function () {}); }, EGX_POLL_MS);
 
 const bySym = {};
@@ -214,9 +216,9 @@ function fromRef(meta, changePctHint) {
   if (price == null) return null;
   // Session moves for main indices (aligned with live market board)
   let changePct = changePctHint != null ? changePctHint : 0;
-  if (meta.symbol === "EGX30" && changePctHint == null) changePct = -1.38;
-  if (meta.symbol === "EGX70" && changePctHint == null) changePct = -3.25;
-  if (meta.symbol === "GOLD" && changePctHint == null) changePct = -0.01;
+  if (meta.symbol === "EGX30" && changePctHint == null) changePct = -0.13;
+  if (meta.symbol === "EGX70" && changePctHint == null) changePct = -2.06;
+  if (meta.symbol === "GOLD" && changePctHint == null) changePct = -0.45;
   const mx = metricsFromCloses([price * 0.98, price * 0.99, price], changePct);
   let currency = "EGP";
   if (meta.market === "US" || meta.symbol === "SILVER" || meta.symbol === "DOW") currency = "USD";
@@ -262,6 +264,63 @@ function applyRefRule(yahooRow, meta) {
   return yahooRow;
 }
 
+
+// —— Metals live (USD from Yahoo, EGP derived) ——
+let metalsCache = { at: 0, goldUsd: null, silverUsd: null, goldEgp: null, silverEgp: null };
+const METALS_TTL = 55 * 1000;
+const EGP_PER_USD_GOLD_GRAM = 1.62; // rough local premium factor vs pure FX; calibrated board
+
+async function refreshMetals() {
+  try {
+    const now = Date.now();
+    if (metalsCache.at && (now - metalsCache.at) < METALS_TTL && metalsCache.goldUsd) {
+      return metalsCache;
+    }
+    let goldUsd = null, silverUsd = null, gChg = 0, sChg = 0;
+    try {
+      const gj = await yahooChart("GC=F");
+      const g = parseYahoo(gj, { symbol: "GOLD", market: "METALS", name: "Gold" });
+      if (g && g.price) { goldUsd = g.price; gChg = g.changePct || 0; }
+    } catch (e) {}
+    try {
+      const sj = await yahooChart("SI=F");
+      const s = parseYahoo(sj, { symbol: "SILVER", market: "METALS", name: "Silver" });
+      if (s && s.price) { silverUsd = s.price; sChg = s.changePct || 0; }
+    } catch (e) {}
+
+    // Fall back to REF
+    if (goldUsd == null) goldUsd = REF.GOLD_USD || 4435;
+    if (silverUsd == null) silverUsd = REF.SILVER || 66.2;
+
+    // EGP 24k per gram: prefer locked REF then soft-adjust with USD move
+    let goldEgp = REF.GOLD || 7205;
+    if (REF.GOLD_USD && goldUsd) {
+      const ratio = goldUsd / REF.GOLD_USD;
+      goldEgp = r2((REF.GOLD || 7205) * ratio);
+    }
+    let silverEgp = REF.SILVER_EGP || r2(silverUsd * 50); // rough
+
+    metalsCache = {
+      at: now,
+      goldUsd: r2(goldUsd),
+      silverUsd: r2(silverUsd),
+      goldEgp: r2(goldEgp),
+      silverEgp: r2(silverEgp),
+      goldChg: r2(gChg),
+      silverChg: r2(sChg),
+      source: "yahoo-metals+egp-map"
+    };
+    // Push into REF so tiles stay fresh
+    REF.GOLD_USD = metalsCache.goldUsd;
+    REF.SILVER = metalsCache.silverUsd;
+    REF.GOLD = metalsCache.goldEgp;
+    REF.SILVER_EGP = metalsCache.silverEgp;
+    return metalsCache;
+  } catch (e) {
+    return metalsCache;
+  }
+}
+
 async function resolveOne(meta) {
   // 1) EGX beta agent (30s poll when WAF allows)
   try {
@@ -287,8 +346,8 @@ async function resolveOne(meta) {
     }
   } catch (e) {}
 
-  // 2) EGX reference book (no Yahoo for EGX)
-  if (meta.market === "EGX" || !meta.market) {
+  // 2) EGX + INDEX reference book (no Yahoo)
+  if (meta.market === "EGX" || meta.market === "INDEX" || meta.isIndex || !meta.market) {
     const row = fromRef(meta, 0);
     if (row) {
       row.source = "egx-ref";
@@ -297,13 +356,45 @@ async function resolveOne(meta) {
     }
   }
 
-  // 3) Metals / US — reference first, optional yahoo only for non-EGX
+  // 3) Metals — live Yahoo USD every ~1 min, EGP mapped
+  if (meta.symbol === "GOLD" || meta.symbol === "SILVER" || meta.market === "METALS") {
+    try {
+      const m = await refreshMetals();
+      if (meta.symbol === "GOLD" && m && m.goldEgp) {
+        return Object.assign(fromRef(meta, m.goldChg) || {}, {
+          price: m.goldEgp,
+          priceEgp: m.goldEgp,
+          priceUsd: m.goldUsd,
+          changePct: m.goldChg,
+          currency: "EGP",
+          live: true,
+          source: m.source || "metals-live",
+          updatedAt: m.at
+        });
+      }
+      if (meta.symbol === "SILVER" && m && m.silverUsd) {
+        return Object.assign(fromRef(meta, m.silverChg) || {
+          symbol: "SILVER", name: "Silver", market: "METALS", sector: "Metals",
+          indices: ["METALS"], currency: "USD", volume: 0
+        }, {
+          price: m.silverUsd,
+          priceUsd: m.silverUsd,
+          priceEgp: m.silverEgp,
+          changePct: m.silverChg,
+          live: true,
+          source: m.source || "metals-live",
+          updatedAt: m.at
+        });
+      }
+    } catch (e) {}
+  }
+  // 4) US / other
   const refRow = fromRef(meta, 0);
   if (refRow) {
     refRow.source = "ref";
     return refRow;
   }
-  if (meta.market === "METALS" || meta.market === "US") {
+  if (meta.market === "US") {
     try {
       const yf = meta.yahoo || meta.symbol;
       const json = await yahooChart(yf);
@@ -369,7 +460,12 @@ async function refreshReferencePrices() {
     if (found.BTFH && found.BTFH > 15) delete found.BTFH;
 
     if (Object.keys(found).length >= 30) {
+      // Never overwrite index / metal board refs with stock scrape noise
+      const LOCK = ["EGX30", "EGX70", "EGX100", "GOLD", "SILVER", "GOLD_USD", "DOW"];
+      const locked = {};
+      LOCK.forEach(function (k) { if (REF[k] != null) locked[k] = REF[k]; });
       Object.assign(REF, found);
+      Object.assign(REF, locked);
       refMeta = { updated: new Date().toISOString().slice(0, 10), source: "stockanalysis-daily", count: Object.keys(found).length };
       // persist
       try {
@@ -396,7 +492,7 @@ app.use(express.json({ limit: "2mb" }));
 app.get("/", (req, res) => {
   res.json({
     name: "ZidanAI Backend",
-    version: "17.0.0",
+    version: "21.0.0",
     symbols: SYMBOLS.length,
     egx: SYMBOLS.filter((s) => s.market === "EGX").length,
     ref: refMeta,
@@ -405,6 +501,11 @@ app.get("/", (req, res) => {
     cache: cache.size,
     time: new Date().toISOString()
   });
+});
+
+app.get("/api/metals", async (req, res) => {
+  const m = await refreshMetals();
+  res.json({ ok: true, ...m, ageMs: Date.now() - (m.at || 0) });
 });
 
 app.get("/api/health", (req, res) => {
@@ -486,13 +587,36 @@ app.get("/api/snapshot", async (req, res) => {
     poolMap(work, BATCH_CONCURRENCY, resolveOne)
   ]);
 
-  const okTiles = tiles.filter(Boolean).map((t) => Object.assign(t, { isIndex: true }));
+  let okTiles = tiles.filter(Boolean).map((t) => Object.assign(t, { isIndex: true }));
+  // Hard guarantee board tiles (EGX30/70, GOLD, SILVER) always present
+  const boardNeed = [
+    { symbol: "EGX30", name: "EGX30" },
+    { symbol: "EGX70", name: "EGX70" },
+    { symbol: "GOLD", name: "24k Gold" },
+    { symbol: "SILVER", name: "Silver" }
+  ];
+  boardNeed.forEach(function (b) {
+    if (!okTiles.find(function (x) { return x.symbol === b.symbol; })) {
+      const meta = { symbol: b.symbol, name: b.name, market: b.symbol.indexOf("EGX") === 0 ? "INDEX" : "METALS", sector: "Index", indices: ["INDEX"], isIndex: true };
+      const row = fromRef(meta, 0);
+      if (row) okTiles.push(Object.assign(row, { isIndex: true }));
+    }
+  });
+  // Attach GOLD_USD for dual display
+  if (REF.GOLD_USD != null) {
+    const g = okTiles.find(function (x) { return x.symbol === "GOLD"; });
+    if (g) { g.priceUsd = REF.GOLD_USD; g.priceEgp = g.price; }
+  }
+  if (REF.SILVER_EGP != null) {
+    const s = okTiles.find(function (x) { return x.symbol === "SILVER"; });
+    if (s) { s.priceUsd = s.price; s.priceEgp = REF.SILVER_EGP; }
+  }
   const okRows = rows.filter(Boolean);
   const overridden = okRows.filter((r) => r.source && String(r.source).indexOf("ref") === 0).length;
 
   res.json({
     ok: okRows.length > 0,
-    source: "zidan-backend-v17",
+    source: "zidan-backend-v21",
     index,
     count: okRows.length,
     overridden,

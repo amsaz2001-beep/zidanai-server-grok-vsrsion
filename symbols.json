@@ -2600,6 +2600,46 @@
       "indices": [
         "US"
       ]
+    },
+    {
+      "symbol": "GPIM",
+      "name": "GPI for Urban Growth",
+      "sector": "Real Estate",
+      "yahoo": "GPIM.CA",
+      "market": "EGX",
+      "indices": [
+        "EGX100"
+      ]
+    },
+    {
+      "symbol": "NTRA",
+      "name": "National Real Estate Bank for Development",
+      "sector": "Real Estate",
+      "yahoo": "NTRA.CA",
+      "market": "EGX",
+      "indices": [
+        "EGX70"
+      ]
+    },
+    {
+      "symbol": "ESRS",
+      "name": "Ezz Steel",
+      "sector": "Industrial",
+      "yahoo": "ESRS.CA",
+      "market": "EGX",
+      "indices": [
+        "EGX30"
+      ]
+    },
+    {
+      "symbol": "DCRC",
+      "name": "Delta Construction & Rebuilding",
+      "sector": "Construction",
+      "yahoo": "DCRC.CA",
+      "market": "EGX",
+      "indices": [
+        "EGX70"
+      ]
     }
   ],
   "refPrices": {
@@ -2637,8 +2677,8 @@
     "SKPC": 16.4,
     "MNHD": 8.0,
     "ESRS": 34.0,
-    "GOLD": 7327.02,
-    "SILVER": 38.5,
+    "GOLD": 7205.0,
+    "SILVER": 66.2,
     "AAPL": 220.0,
     "MSFT": 430.0,
     "NVDA": 125.0,
@@ -2759,7 +2799,7 @@
     "CEFM": 136.95,
     "MPCO": 1.98,
     "EALR": 379.1,
-    "GPIM": 1.96,
+    "GPIM": 1.54,
     "IDRE": 53.15,
     "NAHO": 1.93,
     "UEGC": 1.91,
@@ -2835,11 +2875,21 @@
     "EOSB": 45.73,
     "CPME": 30.0,
     "COPR": 2.09,
-    "EGX30": 54512.65,
-    "EGX70": 20962.17,
-    "GOLD_USD": 3390.0
+    "EGX30": 54866.0,
+    "EGX70": 20893.38,
+    "GOLD_USD": 4435.0,
+    "EGX100": 27200.0,
+    "SILVER_EGP": 3320.0,
+    "ICFC": 5.0,
+    "MBEG": 1.36
   },
-  "count": 254,
-  "refUpdated": "2026-08-19",
-  "refSource": "thndr-session-calibrated"
+  "count": 258,
+  "refUpdated": "2026-09-01",
+  "refSource": "board-calibrated-v20",
+  "aliases": {
+    "GPI": "GPIM",
+    "GPIM": "GPIM",
+    "GIZA": "GPIM",
+    "URBAN": "GPIM"
+  }
 }
