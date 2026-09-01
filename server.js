@@ -292,13 +292,18 @@ async function refreshMetals() {
     if (goldUsd == null) goldUsd = REF.GOLD_USD || 4435;
     if (silverUsd == null) silverUsd = REF.SILVER || 66.2;
 
-    // EGP 24k per gram: prefer locked REF then soft-adjust with USD move
-    let goldEgp = REF.GOLD || 7205;
-    if (REF.GOLD_USD && goldUsd) {
-      const ratio = goldUsd / REF.GOLD_USD;
-      goldEgp = r2((REF.GOLD || 7205) * ratio);
+    // EGP 24k per gram — never confuse USD/oz with EGP/gram
+    let baseEgp = REF.GOLD || 7205;
+    if (baseEgp < 2000) baseEgp = 7205; // guard corrupted ref
+    let baseUsd = REF.GOLD_USD || 4435;
+    if (baseUsd < 500) baseUsd = 4435;
+    let goldEgp = baseEgp;
+    if (goldUsd && baseUsd) {
+      goldEgp = r2(baseEgp * (goldUsd / baseUsd));
     }
-    let silverEgp = REF.SILVER_EGP || r2(silverUsd * 50); // rough
+    if (goldEgp < 2000) goldEgp = 7205; // hard floor for 24k EGP/g
+    let silverEgp = REF.SILVER_EGP || r2((silverUsd || 66) * 50);
+    if (silverUsd && silverUsd < 20) silverUsd = 66.2;
 
     metalsCache = {
       at: now,
@@ -492,7 +497,7 @@ app.use(express.json({ limit: "2mb" }));
 app.get("/", (req, res) => {
   res.json({
     name: "ZidanAI Backend",
-    version: "21.0.0",
+    version: "22.0.0",
     symbols: SYMBOLS.length,
     egx: SYMBOLS.filter((s) => s.market === "EGX").length,
     ref: refMeta,
@@ -506,6 +511,53 @@ app.get("/", (req, res) => {
 app.get("/api/metals", async (req, res) => {
   const m = await refreshMetals();
   res.json({ ok: true, ...m, ageMs: Date.now() - (m.at || 0) });
+});
+
+
+// Queue of user-requested symbols to force into next snapshot
+const discoverQueue = new Map(); // sym -> { name, at }
+
+app.post("/api/discover", express.json(), async (req, res) => {
+  try {
+    let sym = String((req.body && req.body.symbol) || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!sym || sym.length < 2 || sym.length > 6) {
+      return res.status(400).json({ ok: false, error: "bad symbol" });
+    }
+    // alias
+    const AL = { LOTUS: "LUTS", GPI: "GPIM", GIZA: "GPIM", CIB: "COMI", FAWRY: "FWRY", FAWY: "FWRY" };
+    if (AL[sym]) sym = AL[sym];
+    let meta = SYMBOLS.find((s) => s.symbol === sym);
+    if (!meta) {
+      meta = {
+        symbol: sym,
+        name: (req.body && req.body.name) || sym,
+        sector: "EGX",
+        yahoo: sym + ".CA",
+        market: "EGX",
+        indices: ["EGX100"]
+      };
+      SYMBOLS.push(meta);
+    }
+    discoverQueue.set(sym, { at: Date.now(), name: meta.name });
+    // Try live resolve now
+    let row = null;
+    try { row = await resolveOne(meta); } catch (e) {}
+    if (row && row.price != null) {
+      REF[sym] = row.price;
+      return res.json({ ok: true, symbol: sym, found: true, row, message: sym + " is on the desk now." });
+    }
+    // seed a placeholder ref so it appears
+    if (REF[sym] == null) REF[sym] = 1;
+    res.json({
+      ok: true,
+      symbol: sym,
+      found: false,
+      queued: true,
+      message: "Agent is fetching " + sym + ". Press Scan again — it will appear on the board."
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
 });
 
 app.get("/api/health", (req, res) => {
@@ -580,6 +632,13 @@ app.get("/api/snapshot", async (req, res) => {
     work = p30.concat(rest);
   }
   const CAP = index === "ALL" ? 120 : 220;
+  // Force user-discovered symbols into this snapshot
+  try {
+    discoverQueue.forEach(function (_v, sym) {
+      const meta = SYMBOLS.find((s) => s.symbol === sym);
+      if (meta && !work.find((s) => s.symbol === sym)) work.unshift(meta);
+    });
+  } catch (e) {}
   work = work.slice(0, CAP);
 
   const [tiles, rows] = await Promise.all([
@@ -616,7 +675,7 @@ app.get("/api/snapshot", async (req, res) => {
 
   res.json({
     ok: okRows.length > 0,
-    source: "zidan-backend-v21",
+    source: "zidan-backend-v22",
     index,
     count: okRows.length,
     overridden,

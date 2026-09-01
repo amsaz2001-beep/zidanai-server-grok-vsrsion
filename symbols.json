@@ -1492,6 +1492,10 @@
       "market": "EGX",
       "indices": [
         "EGX100"
+      ],
+      "aliases": [
+        "LOTUS",
+        "Lotus"
       ]
     },
     {
@@ -2890,6 +2894,11 @@
     "GPI": "GPIM",
     "GPIM": "GPIM",
     "GIZA": "GPIM",
-    "URBAN": "GPIM"
+    "URBAN": "GPIM",
+    "LOTUS": "LUTS",
+    "LUTS": "LUTS",
+    "CIB": "COMI",
+    "FAWRY": "FWRY",
+    "FAWY": "FWRY"
   }
 }
