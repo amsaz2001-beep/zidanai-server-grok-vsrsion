@@ -13,7 +13,7 @@ const path = require("path");
 const PORT = process.env.PORT || 8787;
 const CACHE_TTL_MS = 60 * 1000;
 const BATCH_CONCURRENCY = 10;
-const REF_THRESHOLD = 0.01; // 1%
+const REF_THRESHOLD = 0.005; // 0.5% — tighter to reference closes
 
 const data = JSON.parse(fs.readFileSync(path.join(__dirname, "symbols.json"), "utf8"));
 const SYMBOLS = data.symbols;
@@ -276,7 +276,7 @@ async function refreshMetals() {
     if (metalsCache.at && (now - metalsCache.at) < METALS_TTL && metalsCache.goldUsd) {
       return metalsCache;
     }
-    let goldUsd = null, silverUsd = null, gChg = 0, sChg = 0;
+    let goldUsd = null, silverUsd = null, gChg = 0, sChg = 0, usdEgp = null;
     try {
       const gj = await yahooChart("GC=F");
       const g = parseYahoo(gj, { symbol: "GOLD", market: "METALS", name: "Gold" });
@@ -287,24 +287,27 @@ async function refreshMetals() {
       const s = parseYahoo(sj, { symbol: "SILVER", market: "METALS", name: "Silver" });
       if (s && s.price) { silverUsd = s.price; sChg = s.changePct || 0; }
     } catch (e) {}
+    // USD/EGP FX for accurate local gram quote
+    try {
+      const fxj = await yahooChart("EGP=X");
+      const fx = parseYahoo(fxj, { symbol: "EGP", market: "FX", name: "USD/EGP" });
+      // Yahoo EGP=X is often EGP per USD
+      if (fx && fx.price && fx.price > 20 && fx.price < 120) usdEgp = fx.price;
+    } catch (e) {}
+    if (usdEgp == null) usdEgp = 50.5; // calibrated desk FX
 
-    // Fall back to REF
-    if (goldUsd == null) goldUsd = REF.GOLD_USD || 4435;
-    if (silverUsd == null) silverUsd = REF.SILVER || 66.2;
+    if (goldUsd == null || goldUsd < 1500 || goldUsd > 9000) goldUsd = REF.GOLD_USD || 4435;
+    if (silverUsd == null || silverUsd < 40 || silverUsd > 150) silverUsd = REF.SILVER || 66.2;
 
-    // EGP 24k per gram — never confuse USD/oz with EGP/gram
-    let baseEgp = REF.GOLD || 7205;
-    if (baseEgp < 2000) baseEgp = 7205; // guard corrupted ref
-    let baseUsd = REF.GOLD_USD || 4435;
-    if (baseUsd < 500) baseUsd = 4435;
-    let goldEgp = baseEgp;
-    if (goldUsd && baseUsd) {
-      goldEgp = r2(baseEgp * (goldUsd / baseUsd));
-    }
-    if (goldEgp < 5000 || goldEgp > 20000) goldEgp = 7205; // 24k EGP/g never USD/oz range
-    if (goldUsd < 1500 || goldUsd > 8000) goldUsd = REF.GOLD_USD || 4435;
-    if (silverUsd < 40 || silverUsd > 150) silverUsd = REF.SILVER || 66.2;
-    let silverEgp = REF.SILVER_EGP || r2(silverUsd * 50);
+    // Troy oz → gram, × USD/EGP → EGP per gram (24k)
+    const OZ_G = 31.1034768;
+    let goldEgp = r2((goldUsd / OZ_G) * usdEgp);
+    // Local retail premium for 24k Egyptian quotes (~1–3%)
+    goldEgp = r2(goldEgp * 1.02);
+    if (goldEgp < 4000 || goldEgp > 25000) goldEgp = REF.GOLD || 7205;
+
+    let silverEgp = r2((silverUsd / OZ_G) * usdEgp);
+    if (silverEgp < 500) silverEgp = r2(silverUsd * usdEgp / OZ_G);
 
     metalsCache = {
       at: now,
@@ -314,9 +317,9 @@ async function refreshMetals() {
       silverEgp: r2(silverEgp),
       goldChg: r2(gChg),
       silverChg: r2(sChg),
-      source: "yahoo-metals+egp-map"
+      usdEgp: r2(usdEgp),
+      source: "yahoo-metals+fx"
     };
-    // Push into REF so tiles stay fresh
     REF.GOLD_USD = metalsCache.goldUsd;
     REF.SILVER = metalsCache.silverUsd;
     REF.GOLD = metalsCache.goldEgp;
@@ -498,7 +501,7 @@ app.use(express.json({ limit: "2mb" }));
 app.get("/", (req, res) => {
   res.json({
     name: "ZidanAI Backend",
-    version: "23.0.0",
+    version: "24.0.0",
     symbols: SYMBOLS.length,
     egx: SYMBOLS.filter((s) => s.market === "EGX").length,
     ref: refMeta,
@@ -667,14 +670,14 @@ app.get("/api/snapshot", async (req, res) => {
   if (g) {
     let ge = Number(g.priceEgp || g.price);
     let gu = Number(g.priceUsd || REF.GOLD_USD || 4435);
-    if (!ge || ge < 5000 || ge > 20000) ge = REF.GOLD || 7205;
-    if (!gu || gu < 1500) gu = REF.GOLD_USD || 4435;
+    if (!gu || gu < 800 || gu > 10000) gu = REF.GOLD_USD || 4435;
+    if (!ge || ge < 3000 || ge > 25000) ge = r2((gu / 31.1035) * 50 * 1.02);
     g.price = ge; g.priceEgp = ge; g.priceUsd = gu; g.currency = "EGP";
   }
   const s = okTiles.find(function (x) { return x.symbol === "SILVER"; });
   if (s) {
     let su = Number(s.priceUsd || s.price || REF.SILVER || 66.2);
-    if (su < 40 || su > 150) su = REF.SILVER || 66.2;
+    if (su < 10 || su > 200) su = REF.SILVER || 66.2;
     s.price = su; s.priceUsd = su; s.priceEgp = REF.SILVER_EGP || r2(su * 50); s.currency = "USD";
   }
   if (REF.SILVER_EGP != null) {
@@ -686,7 +689,7 @@ app.get("/api/snapshot", async (req, res) => {
 
   res.json({
     ok: okRows.length > 0,
-    source: "zidan-backend-v23",
+    source: "zidan-backend-v24",
     index,
     count: okRows.length,
     overridden,
