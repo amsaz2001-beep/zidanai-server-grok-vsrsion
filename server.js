@@ -304,8 +304,9 @@ async function refreshMetals() {
     } catch (e) {}
     if (usdEgp == null) usdEgp = 50.5; // calibrated desk FX
 
-    if (goldUsd == null || goldUsd < 1500 || goldUsd > 9000) goldUsd = REF.GOLD_USD || 4435;
-    if (silverUsd == null || silverUsd < 40 || silverUsd > 150) silverUsd = REF.SILVER || 66.2;
+    // Sep 2026 desk floors — reject stale Yahoo prints (e.g. 3390 gold / 38 silver)
+    if (goldUsd == null || goldUsd < 3800 || goldUsd > 9000) goldUsd = REF.GOLD_USD || 4435;
+    if (silverUsd == null || silverUsd < 55 || silverUsd > 150) silverUsd = REF.SILVER || 66.2;
 
     // Troy oz → gram, × USD/EGP → EGP per gram (24k)
     const OZ_G = 31.1034768;
@@ -509,7 +510,7 @@ app.use(express.json({ limit: "2mb" }));
 app.get("/", (req, res) => {
   res.json({
     name: "ZidanAI Backend",
-    version: "25.0.0",
+    version: "26.0.0",
     symbols: SYMBOLS.length,
     egx: SYMBOLS.filter((s) => s.market === "EGX").length,
     ref: refMeta,
@@ -697,7 +698,7 @@ app.get("/api/snapshot", async (req, res) => {
 
   res.json({
     ok: okRows.length > 0,
-    source: "zidan-backend-v25",
+    source: "zidan-backend-v26",
     index,
     count: okRows.length,
     overridden,
