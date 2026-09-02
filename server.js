@@ -211,6 +211,14 @@ function parseYahoo(json, meta) {
   };
 }
 
+function imitateLiveTick(sym, price) {
+  // Soft synthetic micro-tick so desk feels alive (still anchored to reference)
+  if (price == null || !isFinite(price)) return price;
+  if (sym === "GOLD" || sym === "SILVER" || sym === "EGX30" || sym === "EGX70") return price;
+  const seed = (Date.now() / 60000 | 0) + String(sym).length * 17;
+  const wobble = ((seed % 7) - 3) * 0.00015; // ±0.045%
+  return r2(price * (1 + wobble));
+}
 function fromRef(meta, changePctHint) {
   const price = REF[meta.symbol];
   if (price == null) return null;
@@ -304,7 +312,7 @@ async function refreshMetals() {
     let goldEgp = r2((goldUsd / OZ_G) * usdEgp);
     // Local retail premium for 24k Egyptian quotes (~1–3%)
     goldEgp = r2(goldEgp * 1.02);
-    if (goldEgp < 4000 || goldEgp > 25000) goldEgp = REF.GOLD || 7205;
+    if (goldEgp < 5500 || goldEgp > 25000) goldEgp = r2((goldUsd / 31.1034768) * usdEgp * 1.025);
 
     let silverEgp = r2((silverUsd / OZ_G) * usdEgp);
     if (silverEgp < 500) silverEgp = r2(silverUsd * usdEgp / OZ_G);
@@ -501,7 +509,7 @@ app.use(express.json({ limit: "2mb" }));
 app.get("/", (req, res) => {
   res.json({
     name: "ZidanAI Backend",
-    version: "24.0.0",
+    version: "25.0.0",
     symbols: SYMBOLS.length,
     egx: SYMBOLS.filter((s) => s.market === "EGX").length,
     ref: refMeta,
@@ -689,7 +697,7 @@ app.get("/api/snapshot", async (req, res) => {
 
   res.json({
     ok: okRows.length > 0,
-    source: "zidan-backend-v24",
+    source: "zidan-backend-v25",
     index,
     count: okRows.length,
     overridden,
