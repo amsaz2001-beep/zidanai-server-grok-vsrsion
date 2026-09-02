@@ -301,9 +301,10 @@ async function refreshMetals() {
     if (goldUsd && baseUsd) {
       goldEgp = r2(baseEgp * (goldUsd / baseUsd));
     }
-    if (goldEgp < 2000) goldEgp = 7205; // hard floor for 24k EGP/g
-    let silverEgp = REF.SILVER_EGP || r2((silverUsd || 66) * 50);
-    if (silverUsd && silverUsd < 20) silverUsd = 66.2;
+    if (goldEgp < 5000 || goldEgp > 20000) goldEgp = 7205; // 24k EGP/g never USD/oz range
+    if (goldUsd < 1500 || goldUsd > 8000) goldUsd = REF.GOLD_USD || 4435;
+    if (silverUsd < 40 || silverUsd > 150) silverUsd = REF.SILVER || 66.2;
+    let silverEgp = REF.SILVER_EGP || r2(silverUsd * 50);
 
     metalsCache = {
       at: now,
@@ -497,7 +498,7 @@ app.use(express.json({ limit: "2mb" }));
 app.get("/", (req, res) => {
   res.json({
     name: "ZidanAI Backend",
-    version: "22.0.0",
+    version: "23.0.0",
     symbols: SYMBOLS.length,
     egx: SYMBOLS.filter((s) => s.market === "EGX").length,
     ref: refMeta,
@@ -661,10 +662,20 @@ app.get("/api/snapshot", async (req, res) => {
       if (row) okTiles.push(Object.assign(row, { isIndex: true }));
     }
   });
-  // Attach GOLD_USD for dual display
-  if (REF.GOLD_USD != null) {
-    const g = okTiles.find(function (x) { return x.symbol === "GOLD"; });
-    if (g) { g.priceUsd = REF.GOLD_USD; g.priceEgp = g.price; }
+  // HARD LOCK METALS — never show USD/oz as EGP/g
+  const g = okTiles.find(function (x) { return x.symbol === "GOLD"; });
+  if (g) {
+    let ge = Number(g.priceEgp || g.price);
+    let gu = Number(g.priceUsd || REF.GOLD_USD || 4435);
+    if (!ge || ge < 5000 || ge > 20000) ge = REF.GOLD || 7205;
+    if (!gu || gu < 1500) gu = REF.GOLD_USD || 4435;
+    g.price = ge; g.priceEgp = ge; g.priceUsd = gu; g.currency = "EGP";
+  }
+  const s = okTiles.find(function (x) { return x.symbol === "SILVER"; });
+  if (s) {
+    let su = Number(s.priceUsd || s.price || REF.SILVER || 66.2);
+    if (su < 40 || su > 150) su = REF.SILVER || 66.2;
+    s.price = su; s.priceUsd = su; s.priceEgp = REF.SILVER_EGP || r2(su * 50); s.currency = "USD";
   }
   if (REF.SILVER_EGP != null) {
     const s = okTiles.find(function (x) { return x.symbol === "SILVER"; });
@@ -675,7 +686,7 @@ app.get("/api/snapshot", async (req, res) => {
 
   res.json({
     ok: okRows.length > 0,
-    source: "zidan-backend-v22",
+    source: "zidan-backend-v23",
     index,
     count: okRows.length,
     overridden,
