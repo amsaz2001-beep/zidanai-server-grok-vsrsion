@@ -13,7 +13,7 @@ const path = require("path");
 const PORT = process.env.PORT || 8787;
 const CACHE_TTL_MS = 60 * 1000;
 const BATCH_CONCURRENCY = 10;
-const REF_THRESHOLD = 0.005; // 0.5% — tighter to reference closes
+const REF_THRESHOLD = 0.003; // 0.3% — prefer reference when Yahoo drifts
 
 const data = JSON.parse(fs.readFileSync(path.join(__dirname, "symbols.json"), "utf8"));
 const SYMBOLS = data.symbols;
@@ -364,8 +364,36 @@ async function resolveOne(meta) {
     }
   } catch (e) {}
 
-  // 2) EGX + INDEX reference book (no Yahoo)
-  if (meta.market === "EGX" || meta.market === "INDEX" || meta.isIndex || !meta.market) {
+  // 2) EGX stocks — Yahoo .CA when fresh, else reference (0.5% blend rule)
+  if (meta.market === "EGX" && !meta.isIndex) {
+    let yRow = null;
+    try {
+      const yf = meta.yahoo || (meta.symbol + ".CA");
+      const json = await yahooChart(yf);
+      yRow = parseYahoo(json, meta);
+    } catch (e) {}
+    const ref = REF[meta.symbol];
+    if (yRow && yRow.price != null) {
+      if (ref != null && ref > 0) {
+        const drift = Math.abs(yRow.price - ref) / ref;
+        if (drift > REF_THRESHOLD * 8) {
+          // Yahoo far from official book — prefer ref close
+          const row = fromRef(meta, yRow.changePct);
+          if (row) { row.source = "egx-ref+guard"; row.live = true; return row; }
+        }
+      }
+      yRow.source = "yahoo-egx";
+      yRow.live = true;
+      // soft-update REF for next scan
+      REF[meta.symbol] = yRow.price;
+      return yRow;
+    }
+    const row = fromRef(meta, 0);
+    if (row) { row.source = "egx-ref"; row.live = true; return row; }
+  }
+
+  // 2b) Indices — locked board refs (EGX30/70/100)
+  if (meta.market === "INDEX" || meta.isIndex || !meta.market) {
     const row = fromRef(meta, 0);
     if (row) {
       row.source = "egx-ref";
@@ -510,7 +538,7 @@ app.use(express.json({ limit: "2mb" }));
 app.get("/", (req, res) => {
   res.json({
     name: "ZidanAI Backend",
-    version: "26.0.0",
+    version: "27.0.0",
     symbols: SYMBOLS.length,
     egx: SYMBOLS.filter((s) => s.market === "EGX").length,
     ref: refMeta,
@@ -660,6 +688,12 @@ app.get("/api/snapshot", async (req, res) => {
   ]);
 
   let okTiles = tiles.filter(Boolean).map((t) => Object.assign(t, { isIndex: true }));
+  // EGX30 board lock 2026-09-02 closes as floor when missing
+  const BOARD_LOCK = { EGX30: 55679.72, EGX70: 21225.15, EGX100: 27744.78 };
+  Object.keys(BOARD_LOCK).forEach(function (k) {
+    if (REF[k] == null || REF[k] < 1000) REF[k] = BOARD_LOCK[k];
+  });
+
   // Hard guarantee board tiles (EGX30/70, GOLD, SILVER) always present
   const boardNeed = [
     { symbol: "EGX30", name: "EGX30" },
@@ -698,7 +732,7 @@ app.get("/api/snapshot", async (req, res) => {
 
   res.json({
     ok: okRows.length > 0,
-    source: "zidan-backend-v26",
+    source: "zidan-backend-v27",
     index,
     count: okRows.length,
     overridden,
@@ -717,7 +751,7 @@ app.post("/api/warm", async (req, res) => {
 // Startup: refresh refs in background
 setTimeout(() => { refreshReferencePrices().catch(() => {}); }, 3000);
 // Every 12 hours
-setInterval(() => { refreshReferencePrices().catch(() => {}); }, 12 * 60 * 60 * 1000);
+setInterval(() => { refreshReferencePrices().catch(() => {}); }, 6 * 60 * 60 * 1000);
 
 
 app.get("/api/candles/:sym", async (req, res) => {

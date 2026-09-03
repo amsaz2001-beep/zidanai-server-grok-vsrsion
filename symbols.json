@@ -2647,7 +2647,7 @@
     }
   ],
   "refPrices": {
-    "COMI": 140.13,
+    "COMI": 138.98,
     "SWDY": 107.0,
     "TMGH": 98.5,
     "ETEL": 109.01,
@@ -2879,17 +2879,17 @@
     "EOSB": 45.73,
     "CPME": 30.0,
     "COPR": 2.09,
-    "EGX30": 54866.0,
-    "EGX70": 20893.38,
+    "EGX30": 55679.72,
+    "EGX70": 21225.15,
     "GOLD_USD": 4435.0,
-    "EGX100": 27200.0,
+    "EGX100": 27744.78,
     "SILVER_EGP": 108.0,
     "ICFC": 5.0,
     "MBEG": 1.36
   },
   "count": 258,
-  "refUpdated": "2026-09-01",
-  "refSource": "board-calibrated-v20",
+  "refUpdated": "2026-09-02",
+  "refSource": "egx-close-2026-09-02",
   "aliases": {
     "GPI": "GPIM",
     "GPIM": "GPIM",
