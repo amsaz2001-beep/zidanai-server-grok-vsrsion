@@ -13,7 +13,7 @@ const path = require("path");
 const PORT = process.env.PORT || 8787;
 const CACHE_TTL_MS = 60 * 1000;
 const BATCH_CONCURRENCY = 10;
-const REF_THRESHOLD = 0.003; // 0.3% — prefer reference when Yahoo drifts
+const REF_THRESHOLD = 0.002; // 0.2% — aggressive ref lock when feed drifts
 
 const data = JSON.parse(fs.readFileSync(path.join(__dirname, "symbols.json"), "utf8"));
 const SYMBOLS = data.symbols;
@@ -211,6 +211,28 @@ function parseYahoo(json, meta) {
   };
 }
 
+function sanityPrice(meta, price) {
+  // EGX price sanity — reject absurd prints
+  if (price == null || !isFinite(price)) return null;
+  if (meta && meta.market === "METALS") return price;
+  if (meta && (meta.symbol === "EGX30" || meta.symbol === "EGX70")) {
+    if (meta.symbol === "EGX30" && (price < 20000 || price > 120000)) return REF.EGX30 || price;
+    if (meta.symbol === "EGX70" && (price < 5000 || price > 80000)) return REF.EGX70 || price;
+    return price;
+  }
+  // Equity: most EGX names 0.1 – 5000 EGP
+  if (price <= 0 || price > 20000) {
+    const ref = REF[meta.symbol];
+    if (ref != null) return ref;
+  }
+  const ref = REF[meta && meta.symbol];
+  if (ref != null && ref > 0) {
+    const drift = Math.abs(price - ref) / ref;
+    // If more than 35% off reference, trust ref (broken feed)
+    if (drift > 0.35) return ref;
+  }
+  return price;
+}
 function imitateLiveTick(sym, price) {
   // Soft synthetic micro-tick so desk feels alive (still anchored to reference)
   if (price == null || !isFinite(price)) return price;
@@ -538,7 +560,7 @@ app.use(express.json({ limit: "2mb" }));
 app.get("/", (req, res) => {
   res.json({
     name: "ZidanAI Backend",
-    version: "27.0.0",
+    version: "28.0.0",
     symbols: SYMBOLS.length,
     egx: SYMBOLS.filter((s) => s.market === "EGX").length,
     ref: refMeta,
@@ -732,7 +754,7 @@ app.get("/api/snapshot", async (req, res) => {
 
   res.json({
     ok: okRows.length > 0,
-    source: "zidan-backend-v27",
+    source: "zidan-backend-v28",
     index,
     count: okRows.length,
     overridden,
