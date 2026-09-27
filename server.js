@@ -234,21 +234,17 @@ function sanityPrice(meta, price) {
   return price;
 }
 function imitateLiveTick(sym, price) {
-  // Soft synthetic micro-tick so desk feels alive (still anchored to reference)
-  if (price == null || !isFinite(price)) return price;
-  if (sym === "GOLD" || sym === "SILVER" || sym === "EGX30" || sym === "EGX70") return price;
-  const seed = (Date.now() / 60000 | 0) + String(sym).length * 17;
-  const wobble = ((seed % 7) - 3) * 0.00015; // ±0.045%
-  return r2(price * (1 + wobble));
+  // Exact board lock — no synthetic wobble on EGX
+  return price;
 }
 function fromRef(meta, changePctHint) {
   const price = REF[meta.symbol];
   if (price == null) return null;
   // Session moves for main indices (aligned with live market board)
   let changePct = changePctHint != null ? changePctHint : 0;
-  if (meta.symbol === "EGX30" && changePctHint == null) changePct = -0.13;
-  if (meta.symbol === "EGX70" && changePctHint == null) changePct = -2.06;
-  if (meta.symbol === "GOLD" && changePctHint == null) changePct = -0.45;
+  if (meta.symbol === "EGX30" && changePctHint == null) changePct = -0.83;
+  if (meta.symbol === "EGX70" && changePctHint == null) changePct = -5.82;
+  if (meta.symbol === "GOLD" && changePctHint == null) changePct = 0.2;
   const mx = metricsFromCloses([price * 0.98, price * 0.99, price], changePct);
   let currency = "EGP";
   if (meta.market === "US" || meta.symbol === "SILVER" || meta.symbol === "DOW") currency = "USD";
@@ -276,14 +272,30 @@ function fromRef(meta, changePctHint) {
  */
 function applyRefRule(yahooRow, meta) {
   const ref = REF[meta.symbol];
+  const isEgx = !meta.market || meta.market === "EGX" || meta.market === "METALS" ||
+    meta.symbol === "EGX30" || meta.symbol === "EGX70" || meta.symbol === "EGX100" ||
+    meta.symbol === "GOLD" || meta.symbol === "SILVER";
+  // Board-lock: EGX always uses calibrated reference (Sep 2026 board) unless beta overrides REF
+  if (isEgx && ref != null) {
+    let chg = 0;
+    if (yahooRow && yahooRow.changePct != null && Math.abs(yahooRow.changePct) <= 12) {
+      chg = yahooRow.changePct;
+    }
+    const row = fromRef(meta, chg);
+    if (yahooRow) {
+      row.yahooPrice = yahooRow.price;
+      row.driftPct = r2(Math.abs(yahooRow.price - ref) / ref * 100);
+    }
+    row.source = "board-lock";
+    row.live = true;
+    return row;
+  }
   if (ref == null) return yahooRow;
   if (!yahooRow) return fromRef(meta, 0);
-
   const drift = Math.abs(yahooRow.price - ref) / ref;
   if (drift > REF_THRESHOLD) {
-    // Keep Yahoo's day change if reasonable, else 0
     let chg = yahooRow.changePct;
-    if (Math.abs(chg) > 15) chg = 0; // absurd day moves often mean bad data
+    if (Math.abs(chg) > 15) chg = 0;
     const row = fromRef(meta, chg);
     row.yahooPrice = yahooRow.price;
     row.driftPct = r2(drift * 100);
@@ -560,7 +572,7 @@ app.use(express.json({ limit: "2mb" }));
 app.get("/", (req, res) => {
   res.json({
     name: "ZidanAI Backend",
-    version: "28.0.0",
+    version: "29.0.0",
     symbols: SYMBOLS.length,
     egx: SYMBOLS.filter((s) => s.market === "EGX").length,
     ref: refMeta,
@@ -754,7 +766,7 @@ app.get("/api/snapshot", async (req, res) => {
 
   res.json({
     ok: okRows.length > 0,
-    source: "zidan-backend-v28",
+    source: "zidan-backend-v29",
     index,
     count: okRows.length,
     overridden,
