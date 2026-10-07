@@ -13,6 +13,14 @@ const path = require("path");
 const PORT = process.env.PORT || 8787;
 const CACHE_TTL_MS = 60 * 1000;
 const BATCH_CONCURRENCY = 10;
+const BOARD_LOCK_DATE = "2026-10-06";
+
+/** FETCH_AGENTS_V33 — EGX-first multi-source desk
+ * 1) EGX beta BFF every 30s when reachable
+ * 2) Board REF lock (official close 2026-10-06) if drift > REF_THRESHOLD
+ * 3) Metals live every 60s
+ * Goal: every listed symbol resolves to a number; never leave blanks for EGX
+ */
 const REF_THRESHOLD = 0.002; // 0.2% — aggressive ref lock when feed drifts
 
 const data = JSON.parse(fs.readFileSync(path.join(__dirname, "symbols.json"), "utf8"));
@@ -678,6 +686,9 @@ app.get("/api/quote/:sym", async (req, res) => {
 });
 
 app.get("/api/snapshot", async (req, res) => {
+  try { cache.clear(); } catch (e) {}
+  // SNAPSHOT_FORCE_CLEAR every request
+
   const index = (req.query.index || "ALL").toUpperCase();
   // Soft daily refresh if ref older than ~20h
   try {

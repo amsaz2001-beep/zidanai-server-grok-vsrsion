@@ -1,15 +1,10 @@
 {
   "name": "zidanai-backend",
-  "version": "14.0.0",
-  "description": "ZidanAI backend v14 \u2014 EGX beta 5-min agent + Yahoo/ref",
+  "version": "33.0.0",
+  "description": "ZidanAI backend v33 — Oct 6 2026 board + EGX agents",
   "main": "server.js",
-  "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
-  },
-  "engines": {
-    "node": ">=18"
-  },
+  "scripts": { "start": "node server.js", "dev": "node server.js" },
+  "engines": { "node": ">=18" },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
