@@ -9,11 +9,12 @@ const cors = require("cors");
 const fetch = require("node-fetch");
 const fs = require("fs");
 const path = require("path");
+const { createMcpBridge } = require("./mcpBridge");
 
 const PORT = process.env.PORT || 8787;
 const CACHE_TTL_MS = 60 * 1000;
 const BATCH_CONCURRENCY = 10;
-const BOARD_LOCK_DATE = "2026-10-06";
+const BOARD_LOCK_DATE = "2026-10-18";
 
 /** FETCH_AGENTS_V33 — EGX-first multi-source desk
  * 1) EGX beta BFF every 30s when reachable
@@ -848,6 +849,46 @@ app.get("/api/news/:sym", async (req, res) => {
   } catch (e) {
     res.json({ ok: true, symbol: req.params.sym, items: [], error: String(e.message || e) });
   }
+});
+
+
+
+/* ===== MCP Agent Bridge ===== */
+const mcp = createMcpBridge({
+  get REF() { return REF; },
+  get SYMBOLS() { return SYMBOLS; },
+  get metalsCache() { return typeof metalsCache !== "undefined" ? metalsCache : {}; },
+  get egxBetaCache() { return egxBetaCache; },
+  get refMeta() { return refMeta; },
+  resolveOne: typeof resolveOne === "function" ? resolveOne : null,
+  fetch: fetch,
+  REF_THRESHOLD: REF_THRESHOLD
+});
+
+app.get("/mcp/tools", function (_req, res) {
+  res.json(mcp.listTools());
+});
+
+app.post("/mcp/call", async function (req, res) {
+  try {
+    const name = (req.body && req.body.name) || (req.body && req.body.tool);
+    const args = (req.body && req.body.arguments) || (req.body && req.body.args) || {};
+    if (!name) return res.status(400).json({ error: "name required" });
+    const result = await mcp.callTool(name, args);
+    res.json({ ok: true, tool: name, result: result });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+app.get("/mcp/health", function (_req, res) {
+  res.json({
+    protocol: "zidan-mcp/1.0",
+    thndrPublicApi: false,
+    egxApiKey: !!process.env.EGX_API_KEY,
+    beta: egxBetaCache && egxBetaCache.ok,
+    board: BOARD_LOCK_DATE
+  });
 });
 
 
